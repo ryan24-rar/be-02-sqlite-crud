@@ -1,14 +1,10 @@
-# Task API — PostgreSQL with Docker
+# Backend Engineering Learning Repository
 
-A Flask CRUD API for tasks using PostgreSQL in Docker.
+This repository contains my backend engineering work completed during my FlyRank Backend Engineering Internship.
 
-For A3, the storage was changed from SQLite to PostgreSQL. The routes and API behavior stayed the same. All database code is inside `postgres_repository.py`.
+## Assignments
 
-## Run the project
+- [A3 - FastAPI Basics](readme/A3.md)
+- [A4 - Authentication with Supabase and JWT](readme/A4.md)
 
-1. Copy `.env.example` to `.env`.
-2. Make sure Docker Desktop is running.
-3. Run:
-
-```bash
-docker compose up --build
+More assignments will be added as I progress through the internship.
