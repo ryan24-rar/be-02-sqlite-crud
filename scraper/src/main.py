@@ -1,13 +1,24 @@
-print("RUNNING NEW VERSION")
 
+import json
 from pathlib import Path
 import time
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import requests
+from datetime import datetime, UTC
+
+
+from models import Book
+from normalize import (
+    normalize_price,
+    normalize_stock,
+    normalize_rating,
+)
 
 BOOKS_URL = "https://books.toscrape.com/catalogue/page-1.html"
 
+
+OUTPUT_DIR = Path("output")
 CACHE_DIR = Path("cache")
 def cache_file(url):
     filename = url.split("/")[-1]
@@ -40,6 +51,8 @@ def fetch_page(url):
         timeout=5,
     )
 
+    response.encoding = "utf-8"
+
     if response.status_code != 200:
         raise Exception(f"Request failed with status code {response.status_code}")
 
@@ -62,7 +75,10 @@ def parse_catalogue(html, current_url):
     for article in soup.select("article.product_pod h3 a"):
         href = article["href"]
         absolute_url = urljoin(current_url, href)
-        book_links.append(absolute_url)
+        book_links.append({
+         "product_url": absolute_url,
+         "source_page": current_url,
+})
 
     next_page = None
 
@@ -74,12 +90,51 @@ def parse_catalogue(html, current_url):
     return book_links, next_page
 
 
+def parse_book(html, product_url, source_page):
+    soup = BeautifulSoup(html, "html.parser")
 
+    title = soup.find("h1").text.strip()
+
+    price = soup.find("p", class_="price_color").text.strip()
+
+    availability = (
+        soup.find("p", class_="instock availability")
+            .text
+            .strip()
+    )
+    rating_element = soup.find("p", class_="star-rating")
+    rating = rating_element["class"][1]
+
+    breadcrumb = soup.find("ul", class_="breadcrumb")
+
+    category = breadcrumb.find_all("li")[-2].text.strip()
+    description_header = soup.find("div", id="product_description")
+
+    description = ""
+
+    fetched_at = datetime.now(UTC).isoformat()
+
+    if description_header:
+        description = description_header.find_next_sibling("p").text.strip()
+
+    return {
+    "title": title,
+    "product_url": product_url,
+    "price_text": price,
+    "availability_text": availability,
+    "rating_text": rating,
+    "category": category,
+    "description": description,
+    "fetched_at": fetched_at,
+    "source_page": source_page,
+}
 
 if __name__ == "__main__":
+
+
     current_url = BOOKS_URL
 
-    all_books = []
+    book_urls = []
 
     catalogue_pages = 0
 
@@ -89,15 +144,102 @@ if __name__ == "__main__":
 
         books, current_url = parse_catalogue(html, current_url)
 
-        all_books.extend(books)
+        book_urls.extend(books)
 
         catalogue_pages += 1
 
         if current_url:
             time.sleep(0.5)
 
-    unique_books = set(all_books)
+    books = []
+    errors=[]
 
-    print(f"catalogue_pages={catalogue_pages}")
-    print(f"discovered={len(all_books)}")
-    print(f"unique_urls={len(unique_books)}")
+    for book_info in book_urls:
+
+        html = fetch_page(book_info["product_url"])
+
+        raw_book = parse_book(
+            html,
+            book_info["product_url"],
+            book_info["source_page"],
+        )
+
+        stock_count, in_stock = normalize_stock(
+            raw_book["availability_text"]
+        )
+
+        try:
+            validated_book = Book(
+                **raw_book,
+                price_gbp=normalize_price(raw_book["price_text"]),
+                stock_count=stock_count,
+                in_stock=in_stock,
+                rating=normalize_rating(raw_book["rating_text"]),
+            )
+
+            books.append(
+            validated_book.model_dump(
+                mode="json"
+                )
+            )
+
+        except Exception as e:
+            errors.append(
+            {
+                "product_url": book_info["product_url"],
+                "error": str(e),
+                "raw_record": raw_book,
+            }
+        )
+
+
+        time.sleep(0.5)
+
+    #print(len(books))
+    print(f"Valid books: {len(books)}")
+    print(f"Errors: {len(errors)}")
+    print(books[0])
+    print(f"\ndetail_pages={len(books)}")
+    OUTPUT_DIR.mkdir(exist_ok=True)
+
+    with open(
+    OUTPUT_DIR / "books.json",
+    "w",
+    encoding="utf-8",
+    ) as file:
+        json.dump(
+            books,
+            file,
+            indent=2,
+            ensure_ascii=False,
+        )
+
+
+    with open(
+        OUTPUT_DIR / "errors.json",
+        "w",
+        encoding="utf-8",
+    ) as file:
+
+        json.dump(
+            errors,
+            file,
+            indent=2,
+        )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
