@@ -44,17 +44,37 @@ def fetch_page(url):
     headers = {
         "User-Agent": "FlyRankInternship-A5/1.0 (https://github.com/ryan24-rar/be-02-sqlite-crud)"
     }
+    for attempt in range(2):
 
-    response = requests.get(
-        url,
-        headers=headers,
-        timeout=5,
-    )
+        try:
+            response = requests.get(
+                url,
+                headers=headers,
+                timeout=5,
+            )
 
-    response.encoding = "utf-8"
+            response.encoding = "utf-8"
 
-    if response.status_code != 200:
-        raise Exception(f"Request failed with status code {response.status_code}")
+            if response.status_code == 200:
+                break
+
+            if response.status_code in (500, 502, 503, 504) and attempt == 0:
+                print("Retrying...")
+                time.sleep(1)
+                continue
+
+            raise Exception(
+                f"Request failed with status code {response.status_code}"
+            )
+
+        except requests.Timeout:
+
+            if attempt == 0:
+                print("Timeout. Retrying...")
+                time.sleep(1)
+                continue
+
+            raise
 
     CACHE_DIR.mkdir(exist_ok=True)
 
@@ -131,7 +151,9 @@ def parse_book(html, product_url, source_page):
 
 if __name__ == "__main__":
 
+    run_start = time.time()
 
+    started_at = datetime.now(UTC).isoformat()
     current_url = BOOKS_URL
 
     book_urls = []
@@ -151,56 +173,69 @@ if __name__ == "__main__":
         if current_url:
             time.sleep(0.5)
 
+
+   
+
+
     books = []
     errors=[]
+    failed_pages = 0
 
     for book_info in book_urls:
 
-        html = fetch_page(book_info["product_url"])
+            raw_book = None
+            try:
+                html = fetch_page(book_info["product_url"])
 
-        raw_book = parse_book(
-            html,
-            book_info["product_url"],
-            book_info["source_page"],
-        )
-
-        stock_count, in_stock = normalize_stock(
-            raw_book["availability_text"]
-        )
-
-        try:
-            validated_book = Book(
-                **raw_book,
-                price_gbp=normalize_price(raw_book["price_text"]),
-                stock_count=stock_count,
-                in_stock=in_stock,
-                rating=normalize_rating(raw_book["rating_text"]),
-            )
-
-            books.append(
-            validated_book.model_dump(
-                mode="json"
+                raw_book = parse_book(
+                    html,
+                    book_info["product_url"],
+                    book_info["source_page"],
                 )
+
+                stock_count, in_stock = normalize_stock(
+                    raw_book["availability_text"]
+                )
+
+            
+                validated_book = Book(
+                    **raw_book,
+                    price_gbp=normalize_price(raw_book["price_text"]),
+                    stock_count=stock_count,
+                    in_stock=in_stock,
+                    rating=normalize_rating(raw_book["rating_text"]),
+                )
+
+                books.append(
+                validated_book.model_dump(
+                    mode="json"
+                    )
+                )
+
+            except Exception as e:
+                failed_pages +=1
+                errors.append(
+                {
+                    "product_url": book_info["product_url"],
+                    "error": str(e),
+                    "raw_record": raw_book,
+                }
             )
 
-        except Exception as e:
-            errors.append(
-            {
-                "product_url": book_info["product_url"],
-                "error": str(e),
-                "raw_record": raw_book,
-            }
-        )
 
-
-        time.sleep(0.5)
+    time.sleep(0.5)
 
     #print(len(books))
     print(f"Valid books: {len(books)}")
     print(f"Errors: {len(errors)}")
-    print(books[0])
+    if books:
+            print(books[0])
+    
+    
     print(f"\ndetail_pages={len(books)}")
     OUTPUT_DIR.mkdir(exist_ok=True)
+
+    
 
     with open(
     OUTPUT_DIR / "books.json",
@@ -215,6 +250,7 @@ if __name__ == "__main__":
         )
 
 
+
     with open(
         OUTPUT_DIR / "errors.json",
         "w",
@@ -223,6 +259,30 @@ if __name__ == "__main__":
 
         json.dump(
             errors,
+            file,
+            indent=2,
+        )
+
+
+    run_duration = round(time.time() - run_start, 2)
+
+    report = {
+        "started_at": started_at,
+        "duration_seconds": run_duration,
+        "catalogue_pages": catalogue_pages,
+        "detail_pages": len(book_urls),
+        "valid_records": len(books),
+        "invalid_records": len(errors),
+        "failed_pages": failed_pages,
+    }
+
+    with open(
+        OUTPUT_DIR / "run-report.json",
+        "w",
+        encoding="utf-8",
+    ) as file:
+        json.dump(
+            report,
             file,
             indent=2,
         )
